@@ -29,7 +29,7 @@
 
   - block:
     - name: "{{ title }} handle required base images"
-      include_tasks: common/image.yaml
+      include_tasks: image.yaml
       vars:
         image: "{{ 'loop_'~t.name }}"
       loop: "{{ images | selectattr('name', 'defined') | selectattr('name', 'in', t.requires|default([]) ) }}"
