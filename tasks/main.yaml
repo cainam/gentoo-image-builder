@@ -21,7 +21,7 @@
       msg: "updated list of images\n{{ images | to_nice_yaml }}\nlimit_images:\n{{ limit_images | to_nice_yaml }}\n"
 
   - name: handle images
-    include_tasks: common/image.yaml
+    include_tasks: image.yaml
     vars:
       image: "image0"
     when: (limit_images is not defined or image0.name is in limit_images) and image0.name not in images_processed
