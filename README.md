@@ -18,6 +18,13 @@ This solution is not (yet) implementing all the features of kubler, especially
 - different initial builder
 - cross-compiling 
 
+On the other hand it goes beyond kubler supporting
+- not only kubler build images, but also freely scripted once and direct pull/push of images from a registry
+
+The process is based on a central image definition structure which includes the type of a build, the description how to build and the image it depends on.
+An example can be found in the examples folder.
+
+
 ## How the images are build
 From Gentoo a first builder is created called builder-scratch which is used for images that are build "FROM scratch".
 Each further image is then build using the builder of the image it is build FROM.
@@ -34,5 +41,5 @@ flowchart TD;
   builder-go-->descheduler
   builder-go-->builder-descheduler
 ```
-
+A
 
