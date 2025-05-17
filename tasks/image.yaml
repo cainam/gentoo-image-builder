@@ -55,7 +55,6 @@
     headers:
       Accept: application/vnd.oci.image.manifest.v1+json
     method: "GET"
-    validate_certs: no
   register: check_image
   when: "'no_exists_check' not in ansible_run_tags"
   failed_when: false
