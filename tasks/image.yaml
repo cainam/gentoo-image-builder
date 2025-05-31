@@ -267,7 +267,9 @@
     - name: "{{ title }} - run helper to process templates directory"
       include_role:
         name: shared_helper
+      vars:
         dir_var: build_dir
+        template_source_dir: image_build_sources
       tasks_from: template_directory.yaml
 #    - name: "{{ title }} tempdir for build"
 #      tempfile:
