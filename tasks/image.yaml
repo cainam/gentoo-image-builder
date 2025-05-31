@@ -32,6 +32,7 @@
       include_tasks: image.yaml
       vars:
         image: "{{ 'loop_'~t.name }}"
+      when: image not in images_processed
       loop: "{{ images | selectattr('name', 'defined') | selectattr('name', 'in', t.requires|default([]) ) }}"
       loop_control:
         loop_var: "{{ 'loop_'~t.name }}"
@@ -126,6 +127,7 @@
             VOLUME /var/db/repos /var/cache/eix
             EOF
             podman build -v {{ build_dir }}/portage-{{ kubler.portage }}.tar.xz:/portage-{{ kubler.portage }}.tar.xz --file Dockerfile.portage --tag {{ portage_image }}
+            podman container rm -f {{ kubler.portage_container }}
             podman run --name {{ kubler.portage_container }} {{ portage_image }} true
         when: "check_portage.rc != 0"
         
@@ -262,26 +264,31 @@
     when: image_info.type == 'fetch'
   
   - block:
-    - name: "{{ title }} tempdir for build"
-      tempfile:
-        path: "{{ remote_temp }}"
-        state: directory
-        suffix: "-build-image"
-      register: build_dir
-    - set_fact:
-        templates_dirs:  "{{ lookup('pipe', '[ ! -d \"'+ image_build_sources +'\" ] || find \"'+ image_build_sources +'\"   -type d').split('\n')|reject('match', '^$')  }}"
-        templates_files: "{{ lookup('pipe', '[ ! -d \"'+ image_build_sources +'\" ] || find \"'+ image_build_sources +'\" ! -type d').split('\n')|reject('match', '^$')  }}"
-    - name: "{{ title }} ensure destination directory exists for templates"
-      file:
-        path: "{{ build_dir }}{{ item | replace (image_build_sources,'') }}"
-        recurse: true
-        state: directory
-      loop: "{{ templates_dirs }}"
-    - name: "{{ title }} create config from templates"
-      template:
-        src: "{{ item }}"
-        dest: "{{ build_dir }}/{{ item | replace( image_build_sources , '') }}"
-      loop: "{{ templates_files }}"
+    - name: "{{ title }} - run helper to process templates directory"
+      include_role:
+        name: shared_helper
+        dir_var: build_dir
+      tasks_from: template_directory.yaml
+#    - name: "{{ title }} tempdir for build"
+#      tempfile:
+#        path: "{{ remote_temp }}"
+#        state: directory
+#        suffix: "-build-image"
+#      register: build_dir
+#    - set_fact:
+#        templates_dirs:  "{{ lookup('pipe', '[ ! -d \"'+ image_build_sources +'\" ] || find \"'+ image_build_sources +'\"   -type d').split('\n')|reject('match', '^$')  }}"
+#        templates_files: "{{ lookup('pipe', '[ ! -d \"'+ image_build_sources +'\" ] || find \"'+ image_build_sources +'\" ! -type d').split('\n')|reject('match', '^$')  }}"
+#    - name: "{{ title }} ensure destination directory exists for templates"
+#      file:
+#        path: "{{ build_dir }}{{ item | replace (image_build_sources,'') }}"
+#        recurse: true
+#        state: directory
+#      loop: "{{ templates_dirs }}"
+#    - name: "{{ title }} create config from templates"
+#      template:
+#        src: "{{ item }}"
+#        dest: "{{ build_dir }}/{{ item | replace( image_build_sources , '') }}"
+#      loop: "{{ templates_files }}"
     - name: "{{ title }} build image"
       shell: |
         set -xe

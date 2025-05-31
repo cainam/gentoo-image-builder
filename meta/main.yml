@@ -1,0 +1,5 @@
+dependencies:
+  - name: shared_helper
+    src: git+https://github.com/cainam/ansible_helper_playbooks.git
+    version: main
+
