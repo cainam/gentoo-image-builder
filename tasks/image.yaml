@@ -82,6 +82,7 @@
       set_fact:
         build_container: "rootfs-builder-{{ image_info.section }}-{{ image_info.name }}"
         build_image: "{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:{{ image_info.tag }}"
+        latest_image: "{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:latest"
         req_section: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='section') | first| default('build')}}"
         req_tag: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='tag') |first | default(kubler.portage)}}"
     - name: "{{ title }} directories"
@@ -102,7 +103,8 @@
       # portage
       - name: "{{ title }} check for portage image availability"
         shell: |
-          podman image inspect --format " " {{ portage_image }} 2>&1
+          #podman image inspect --format " " {{ portage_image }} 2>&1
+          podman ps -a --format "{% raw %}{{.Names}}{% endraw %}" | grep "^{{ kubler.portage_container }}$"
         failed_when: false
         register: check_portage
         
@@ -236,7 +238,7 @@
 
       - name: "{{ title }} commit build container to image"
         shell: >-
-          podman commit --squash {{ build_container }} {{ image_info.section }}/{{ kubler.default_builder }}-{{ image_info.name }}:{{ image_info.tag }}
+          podman commit {% if image_info.name == "scratch" %}--squash{%endif%} {{ build_container }} {{ image_info.section }}/{{ kubler.default_builder }}-{{ image_info.name }}:{{ image_info.tag }}
 
       - block: 
         - name: "{{ title }} generate Dockerfile"
@@ -249,6 +251,10 @@
         - name: "{{ title }} push to registry"
           shell: |
             podman push {{ build_image }}
+            {% if image_info.name == "base" %}
+            podman tag {{ build_image }} {{ latest_image }}
+            podman push {{ latest_image }}
+            {% endif %}
         when: "image_info.name != 'scratch'"
       when: "image_info.name != 'scratch' or check_core.rc != 0 or check_stage3.rc != 0 or check_portage.rc != 0 or check_scratch.rc != 0"
     when: image_info.type == 'kubler'
@@ -267,30 +273,9 @@
     - name: "{{ title }} - run helper to process templates directory"
       include_role:
         name: shared_helper
+        tasks_from: template_directory.yaml
       vars:
         dir_var: build_dir
-        template_source_dir: image_build_sources
-      tasks_from: template_directory.yaml
-#    - name: "{{ title }} tempdir for build"
-#      tempfile:
-#        path: "{{ remote_temp }}"
-#        state: directory
-#        suffix: "-build-image"
-#      register: build_dir
-#    - set_fact:
-#        templates_dirs:  "{{ lookup('pipe', '[ ! -d \"'+ image_build_sources +'\" ] || find \"'+ image_build_sources +'\"   -type d').split('\n')|reject('match', '^$')  }}"
-#        templates_files: "{{ lookup('pipe', '[ ! -d \"'+ image_build_sources +'\" ] || find \"'+ image_build_sources +'\" ! -type d').split('\n')|reject('match', '^$')  }}"
-#    - name: "{{ title }} ensure destination directory exists for templates"
-#      file:
-#        path: "{{ build_dir }}{{ item | replace (image_build_sources,'') }}"
-#        recurse: true
-#        state: directory
-#      loop: "{{ templates_dirs }}"
-#    - name: "{{ title }} create config from templates"
-#      template:
-#        src: "{{ item }}"
-#        dest: "{{ build_dir }}/{{ item | replace( image_build_sources , '') }}"
-#      loop: "{{ templates_files }}"
     - name: "{{ title }} build image"
       shell: |
         set -xe
