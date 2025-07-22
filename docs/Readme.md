@@ -5,24 +5,29 @@ This git repository is inspired by [Kubler](https://github.com/edannenberg/kuble
 - the approach to create a builder and target image in tandem and
 - [Gentoo](https://www.gentoo.org/)
 
-The resulting images are incredibly small in size (e.g. the smallest busybox using alpine had a size of ~4.6MB, while the Gentoo-based busybox image is 2.6MB)
+The resulting images are incredibly small in size (e.g. the smallest busybox using alpine had a size of ~4.6MB, while the Gentoo-based busybox image is 2.6MB with room to shrink even further!)
 
 Nevertheless I faced some quirks which made me replace kubler:
-- high quality shell scripts but I found it difficult to quickly find issues and to understand the impact of changes in my build chain
+- kubler is made out of high quality shell scripts, but I found it difficult to quickly find issues and to understand the impact of changes in my build chain
 - tags:
   - kubler is not flexible for image tags and custom tagging (e.g. I want my nodejs tagged with the version of nodejs, not the portage tag)
   - ":latest" tag is always used while I want to avoid it completely
 - lack of a central file which includes all my build dependencies
+- as my own deployment is build around Ansible there is plenty of stuff in the scripts which can be done much shorter and more readable in Ansible playbooks
 
 This solution is not (yet) implementing all the features of kubler, especially
-- different initial builder
+- allowing different initial builders and 
 - cross-compiling 
 
 On the other hand it goes beyond kubler supporting
-- not only kubler build images, but also freely scripted once and direct pull/push of images from a registry
+- not only kubler build images, but also freely scripted once and direct pull/push of images from a registry (where it could be e.g. locally scanned before being used in a deployment)
 
-The process is based on a central image definition structure which includes the type of a build, the description how to build and the image it depends on.
-An example can be found in the examples folder.
+The process is based on a central image definition structure which includes 
+- the type of a build,
+- the description how to build and
+- the image it depends on.
+  
+An example can be found in the [examples folder](../examples).
 
 
 ## How the images are build
