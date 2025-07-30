@@ -15,7 +15,7 @@ jobs:
     permissions:
       pages: write
       id-token: write
-      contents: write
+      # contents: write
     # Reference the reusable workflow in repo2
     uses:  cainam/cainam.github.io/.github/workflows/jekyll-gh-pages.yml@main
 #    with:
