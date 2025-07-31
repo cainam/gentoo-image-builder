@@ -12,7 +12,7 @@ Nevertheless I faced some quirks which made me replace kubler:
 - tags:
   - kubler is not flexible for image tags and custom tagging (e.g. I want my nodejs tagged with the version of nodejs, not the portage tag)
   - ":latest" tag is always used while I want to avoid it completely
-- lack of a central file which includes all my build dependencies
+- lack of a central files which includes all my build dependencies
 
 This solution is not (yet) implementing all the features of kubler, especially
 - different initial builder
@@ -22,7 +22,8 @@ On the other hand it goes beyond kubler supporting
 - not only kubler build images, but also freely scripted once and direct pull/push of images from a registry
 
 The process is based on a central image definition structure which includes the type of a build, the description how to build and the image it depends on.
-An example can be found in the examples folder.
+
+An example can be found in the examples folder with two files defininig the dictionaries of images and software
 
 
 ## How the images are build
@@ -41,5 +42,4 @@ flowchart TD;
   builder-go-->descheduler
   builder-go-->builder-descheduler
 ```
-
 

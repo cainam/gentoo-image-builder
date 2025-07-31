@@ -3,6 +3,7 @@
     vars: # keep .name if it exists, otherwise take the last part of the source image
       image_new: "{{ image | combine({
         'name':    image.name    | default( (image.source | default('')).split('/')|last),
+        'tag': image.tag  | default( software[image.name].version ),
         'requires': image.requires | default( ['scratch'] ),
         'section': image.section | default( default_section|default('') )
         }) }}"
