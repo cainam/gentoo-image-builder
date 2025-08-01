@@ -32,7 +32,7 @@
       include_tasks: image.yaml
       vars:
         image: "{{ 'loop_'~t.name }}"
-      when: image not in images_processed
+      when: "{{ t.name not in images_processed }}"
       loop: "{{ images | selectattr('name', 'defined') | selectattr('name', 'in', t.requires|default([]) ) }}"
       loop_control:
         loop_var: "{{ 'loop_'~t.name }}"
