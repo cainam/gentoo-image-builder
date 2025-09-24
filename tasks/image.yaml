@@ -31,11 +31,11 @@
     - name: "{{ title }} handle required base images"
       include_tasks: image.yaml
       vars:
-        image: "{{ 'loop_'~t.name }}"
+        image: "{{ 'loop_'~t.name|replace('-', '_') }}"
       when: "{{ t.name not in images_processed }}"
       loop: "{{ images | selectattr('name', 'defined') | selectattr('name', 'in', t.requires|default([]) ) }}"
       loop_control:
-        loop_var: "{{ 'loop_'~t.name }}"
+        loop_var: "{{ 'loop_'~t.name|replace('-', '_') }}"
   
   - name: "recursion end - set vars to complete the upstream image"
     set_fact:
@@ -43,12 +43,6 @@
       title: "manage image {{ lookup('vars', var_stack[-1]).name }} -"
       var_stack: "{{ var_stack[0:-1] }}"
       image_info: "{{ lookup('vars', var_stack[-1]) }}"
-
-- name: "{{ title }} check for builder image availability"
-  shell: |
-    podman image inspect --format " " {{ image_info.section }}/{{ kubler.default_builder }}-{{ image_info.name }}:{{ image_info.tag }} 2>&1
-  failed_when: false
-  register: check_builder
 
 - name: "{{ title }} check if image exists already"
   uri:
@@ -65,26 +59,31 @@
   when: "'debug' in ansible_run_tags"
 
 - block: # build something
-  - block: # kubler
+  - block: # gentoo image builder
     - name: "{{ title }} variables - 1"
       set_fact:
         requires: "{{ image_info.requires | default(['core'])| first }}" # as scratch should be the only image without requires attribute
-        dest_dir: "{{ kubler.base }}/{{ image_info.section }}/{{ image_info.name }}"
-        build_dir: "{{ kubler.base }}/build"
-        portage_image: "{{ kubler.build_dir }}/portage:{{ kubler.portage }}"
-        stage3_image: "{{ kubler.build_dir }}/{{ kubler.stage3_base }}:{{ kubler.stage3_date }}"
-        stage3_url: "https://distfiles.gentoo.org/releases/{{ default_platform }}/autobuilds/{{ kubler.stage3_date }}/"
-        stage3_file: "{{ kubler.stage3_base }}-{{ kubler.stage3_date }}.tar.xz"
-        core_builder: "{{ kubler.build_dir }}/{{ kubler.default_builder }}-core:{{ kubler.portage }}" 
-        scratch_builder: "build/{{ kubler.default_builder }}-scratch:{{ kubler.portage }}"
+        dest_dir: "{{ builder.base }}/{{ image_info.section }}/{{ image_info.name }}"
+        build_dir: "{{ builder.base }}/build"
+        stage3_image: "{{ builder.build_dir }}/{{ builder.stage3_base }}:{{ builder.stage3_date }}"
+        stage3_url: "https://distfiles.gentoo.org/releases/{{ default_platform }}/autobuilds/{{ builder.stage3_date }}/"
+        stage3_file: "{{ builder.stage3_base }}-{{ builder.stage3_date }}.tar.xz"
+        core_builder: "{{ builder.build_dir }}/{{ builder.default_builder }}-core:{{ builder.portage }}"
+        build_image: "{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:{{ image_info.tag }}"
+        builder_image: "{{ image_info.section }}/{{ builder.default_builder }}-{{ image_info.name }}:{{ image_info.tag }}"
+        latest_image: "{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:latest"
+
+    - name: "{{ title }} check for builder image availability"
+      shell: |
+        podman image inspect --format " " {{ builder_image }} 2>&1
+      failed_when: false
+      register: check_builder
 
     - name: "{{ title }} variables - 2"
       set_fact:
-        build_container: "rootfs-builder-{{ image_info.section }}-{{ image_info.name }}"
-        build_image: "{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:{{ image_info.tag }}"
-        latest_image: "{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:latest"
         req_section: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='section') | first| default('build')}}"
-        req_tag: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='tag') |first | default(kubler.portage)}}"
+        req_tag: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='tag') |first | default(builder.portage)}}"
+        portage_dir: "{{ build_dir }}/portage-{{ builder.portage }}"
     - name: "{{ title }} directories"
       file:
         path: "{{ item }}"
@@ -93,45 +92,26 @@
       loop:
       - "{{ dest_dir }}"
       - "{{ build_dir }}"
-    - name: "{{ title }} git clone kubler"
-      shell: |
-        if [ ! -d "kubler" ]; then git clone -b master --depth 1 "{{ kubler.git }}" kubler; else (cd kubler; git pull); fi  
-      args:
-        chdir: "{{ kubler.base }}"
 
     - block: # check only when image_info.name == 'scratch'
       # portage
-      - name: "{{ title }} check for portage image availability"
-        shell: |
-          #podman image inspect --format " " {{ portage_image }} 2>&1
-          podman ps -a --format "{% raw %}{{.Names}}{% endraw %}" | grep "^{{ kubler.portage_container }}$"
+      - name: "{{ title }} check for portage directory existance"
+        stat:
+          path: "{{ portage_dir }}"
         failed_when: false
         register: check_portage
         
+      - debug:
+          msg: "check_portage: {{ check_portage }}"
       - block:
         - name: "{{ title }} get portage"
           get_url:
-            url: https://distfiles.gentoo.org/snapshots/portage-{{ kubler.portage }}.tar.xz
+            url: https://distfiles.gentoo.org/snapshots/portage-{{ builder.portage }}.tar.xz
             dest: "{{ build_dir }}/"
-        - name: "{{ title }} build portage image"
+        - name: "{{ title }} extract portage archive"
           shell: |
-            cd {{ build_dir }}
-            cat > "Dockerfile.portage" <<EOF
-            FROM local/base AS builder
-            COPY ./portage-{{ kubler.portage }}.tar.xz /
-            RUN set -x && \
-                mkdir -p /var/db/repos/ && \
-                tar -xf /portage-{{ kubler.portage }}.tar.xz -C /var/db/repos && \
-                mv /var/db/repos/portage /var/db/repos/gentoo && \
-                mkdir -p /var/db/repos/gentoo/metadata
-            FROM local/base
-            COPY --from=builder /var/db/repos/gentoo /var/db/repos/gentoo
-            VOLUME /var/db/repos /var/cache/eix
-            EOF
-            podman build -v {{ build_dir }}/portage-{{ kubler.portage }}.tar.xz:/portage-{{ kubler.portage }}.tar.xz --file Dockerfile.portage --tag {{ portage_image }}
-            podman container rm -f {{ kubler.portage_container }}
-            podman run --name {{ kubler.portage_container }} {{ portage_image }} true
-        when: "check_portage.rc != 0"
+            mkdir -p "{{ portage_dir }}" && tar --directory "{{ portage_dir }}" -xf "{{ build_dir }}/portage-{{ builder.portage }}.tar.xz" --strip-components=1
+        when: not check_portage.stat.exists
         
       # stage3 
       - name: "{{ title }} check for stage3 image availability"
@@ -141,6 +121,8 @@
         register: check_stage3
         
       - block:
+        - debug:
+            msg: "stage3 source: {{ stage3_url }}/{{ stage3_file }}"
         - name: "{{ title }} get stage3"
           get_url:
             url: "{{ stage3_url }}/{{ stage3_file }}"
@@ -148,7 +130,7 @@
         - name: "{{ title }} build stage3 image"
           shell: |
             podman import "{{ build_dir }}/{{ stage3_file }}" {{ stage3_image }}
-        when: "check_stage3.rc != 0 or check_portage.rc != 0"
+        when: "check_stage3.rc != 0 or not check_portage.stat.exists"
         
       # core builder
       - name: "{{ title }} check for core builder image availability"
@@ -160,38 +142,65 @@
       - block:
         - name: "{{ title }} build core builder image"
           shell: |
-            cd {{ build_dir }}
-            cp -rdp "{{ kubler.base }}/kubler/engine/docker/bob-core"/* .
-            . {{ kubler.base }}/kubler/engine/docker.sh
-            BOB_CURRENT_STAGE3_ID="{{ stage3_image }}" BOB_CHOST='{{ kubler.chost }}' BOB_BUILDER_CHOST='{{ kubler.chost }}' generate_dockerfile {{ build_dir }}
-            mv Dockerfile Dockerfile.core
-            podman build --file Dockerfile.core --tag {{ core_builder }}
-        when: "check_core.rc != 0 or check_stage3.rc != 0 or check_portage.rc != 0"
+            cat >> {{ build_dir }}/Dockerfile.core <<EOF
+            FROM {{ stage3_image }}
+            {{ builder.env }}
+            EOF
+            podman build -f {{ build_dir }}/Dockerfile.core -t {{ core_builder }} > >(tee -a {{ build_dir }}/podman-build.log) 2> >(tee -a {{ build_dir }}/podman-build.log >&2)
+        when: "check_core.rc != 0 or check_stage3.rc != 0 or not check_portage.stat.exists"
         
       # scratch builder
       - name: "{{ title }} check for scratch builder image availability"
         shell: |
-          podman image inspect --format " " {{ scratch_builder }} 2>&1
+          podman image inspect --format " " {{ builder_image }} 2>&1
         failed_when: false
         register: check_scratch
       when: image_info.name == 'scratch'
 
-    - name: "{{ title }} create Dockerfile.template"
+    - name: "{{ title }} create build.sh"
+      vars:
+        build_sh: "{{ dest_dir }}/build.sh"
+      shell: |
+        echo '_packages="{{ image_info.build.packages | default('') }}"' > "{{ build_sh }}"
+        set -x
+
+        cat >> "{{ build_sh }}" <<"INLINE"
+        configure_builder(){
+          {{ image_info.build.configure_builder | default('true') }}
+        }
+        INLINE
+        cat >> "{{ build_sh }}" <<"INLINE"
+        configure_rootfs_build(){
+          {{ image_info.build.configure_rootfs_build | default('true') }}
+        }
+        INLINE
+        echo 'finish_rootfs_build(){
+          {{ image_info.build.finish_rootfs_build | default('true') }}
+        }' >> "{{ build_sh }}"
+        echo 'purge_image_root(){
+          {{ builder.purge_image_root | default('true') }}
+        }' >> "{{ build_sh }}"
+
+    - name: "{{ title }} create Dockerfile"
       vars:
         entrypoint: "{{ image_info.build.entrypoint }}"
         user: "{{ image_info.build.user }}"
         workdir: "{{ image_info.workdir }}"
         env: "{{ image_info.env }}"
       shell: |
-        cat > "{{ dest_dir }}/Dockerfile.template" <<"EOF"
-        FROM ${IMAGE_PARENT}
-        LABEL maintainer="${MAINTAINER}"
-        ADD rootfs.tar /
+        cat > "{{ dest_dir }}/Dockerfile" <<"EOF"
+        FROM {{ req_section }}/{{ builder.default_builder }}-{{ requires }}:{{ req_tag }} as builder
+        ADD build.sh /
+        RUN source /build.sh && configure_builder && export ROOT=/image-root && configure_rootfs_build && ([ ! -z "${_packages}" ] && emerge --binpkg-respect-use=y -v ${_packages}; true ) && finish_rootfs_build && purge_image_root
+        FROM {% if requires == 'scratch' %}scratch{% else %}{{ registry }}/{{ req_section }}/{{ requires }}:{{ req_tag }}{% endif %}
+
         {% if env is defined -%}
         {% for e in env %}
         ENV {{ e }}="{{ env[e] }}"
         {% endfor %}
         {% endif %}
+
+        COPY --from=builder /image-root/ /
         {% if workdir is defined -%}
         WORKDIR "{{ workdir }}"
         {% endif %}
@@ -202,52 +211,22 @@
         ENTRYPOINT ["{{ entrypoint | join('","') }}"]
         {% endif %}
         EOF
-    - name: "{{ title }} create build.sh"
-      vars:
-        build_sh: "{{ dest_dir }}/build.sh"
-      shell: |
-        echo '_packages="{{ image_info.build.packages | default('') }}"' > "{{ build_sh }}"
-        
-        cat >> "{{ build_sh }}" <<"INLINE"
-        configure_builder(){
-          {{ image_info.build.configure_builder | default('true') }}
-        }
-        INLINE
-        
-        cat >> "{{ build_sh }}" <<"INLINE"
-        configure_rootfs_build(){
-          {{ image_info.build.configure_rootfs_build | default('true') }}
-        }
-        INLINE
-        
-        echo 'finish_rootfs_build(){ 
-          {{ image_info.build.finish_rootfs_build | default('true') }}
-        }' >> "{{ build_sh }}"
 
     - block:
-      - name: "{{ title }} build content"
+      - name: "{{ title }} build builder"
         shell: >-
-          podman run --replace --name {{ build_container }} --volumes-from {{ kubler.portage_container }}
-          -v {{ dest_dir }}/:/config -v {{ kubler.base }}/data/distfiles:/distfiles -v {{ kubler.base }}/data/packages:/packages 
-          -e BOB_BUILDER_CHOST={{ kubler.chost }} -e BOB_CHOST={{ kubler.chost }} -e BOB_CURRENT_STAGE3_ID={{ stage3_image }}  
-          -e BOB_EMERGE_DEFAULT_OPTS="-b -k --binpkg-respect-use=y --quiet-build" -e BOB_EMERGE_OPT="-v --tree" 
-          -e BOB_FEATURES="-parallel-fetch nodoc noinfo noman binpkg-multi-instance -ipc-sandbox -network-sandbox -pid-sandbox" -e BOB_GENTOO_MIRRORS=http://distfiles.gentoo.org/ 
-          -e BOB_HOST_GID=0 -e BOB_HOST_UID=0 -e BOB_IS_DEBUG=false -e BOB_MAKEOPTS=-j4 -e BOB_TIMEZONE=UTC 
-          -e BOB_CURRENT_TARGET="{{ build_image }}"
-          {{ req_section }}/{{ kubler.default_builder }}-{{ requires }}:{{ req_tag }} kubler-build-root
-
-      - name: "{{ title }} commit build container to image"
-        shell: >-
-          podman commit {% if image_info.name == "scratch" %}--squash{%endif%} {{ build_container }} {{ image_info.section }}/{{ kubler.default_builder }}-{{ image_info.name }}:{{ image_info.tag }}
+          podman build {{ dest_dir }} --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{  builder.base }}/data/packages:/packages --volume {{ builder.base }}/data/distfiles:/distfiles -t {{ builder_image }} --target builder {% if image_info.name == "scratch" %}--squash-all{%endif%}  > >(tee -a {{ dest_dir }}/podman-build.log) 2> >(tee -a {{ dest_dir  }}/podman-build.log >&2)
 
       - block: 
-        - name: "{{ title }} generate Dockerfile"
-          shell: |
-            . {{ kubler.base }}/kubler/engine/docker.sh
-            IMAGE_PARENT="{% if requires == 'scratch' %}scratch{% else %}{{ registry }}/{{ req_section }}/{{ requires }}:{{ req_tag }}{% endif %}" generate_dockerfile {{ dest_dir }}
         - name: "{{ title }} build image"
           shell: >-
-            podman build -t {{ build_image }} {{ dest_dir }} 
+            podman build {{ dest_dir }} --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{ builder.base }}/data/packages:/packages --volume {{ builder.base }}/data/distfiles:/distfiles -t {{ build_image }} > >(tee -a {{ dest_dir }}/podman-build.log) 2> >(tee -a {{ dest_dir  }}/podman-build.log >&2)
+
+        - name: "{{ title }} test image"
+          shell: |
+            podman run -t --rm {{ build_image }} {{ image_info.test }} 2>&1 | cat > {{ dest_dir  }}/test.log
+          when: image_info.test is defined
+
         - name: "{{ title }} push to registry"
           shell: |
             podman push {{ build_image }}
@@ -256,8 +235,9 @@
             podman push {{ latest_image }}
             {% endif %}
         when: "image_info.name != 'scratch'"
-      when: "image_info.name != 'scratch' or check_core.rc != 0 or check_stage3.rc != 0 or check_portage.rc != 0 or check_scratch.rc != 0"
-    when: image_info.type == 'kubler'
+      #when: "image_info.name != 'scratch' or check_core.rc != 0 or check_stage3.rc != 0 or not check_portage.stat.exists or check_scratch.rc != 0 or check_builder.rc != 0"
+      when: "image_info.name != 'scratch' and (check_image.status != 200 or check_builder.rc != 0)"
+    when: image_info.type == 'gentoo-image-builder'
   
   - block:
     - name: "{{ title }} fetch image from registry and push to local registry"
@@ -288,7 +268,7 @@
     - debug: var=build_out
       failed_when: false
     when: image_info.type == 'script'
-  when: "'status' not in check_image.keys() or (image_info.name != 'scratch' and check_image is defined and 'status' in check_image.keys() and check_image.status != 200) or (image_info.type == 'kubler' and check_builder.rc != 0)"
+  when: "'status' not in check_image.keys() or (image_info.name != 'scratch' and check_image is defined and 'status' in check_image.keys() and check_image.status != 200) or image_info.type == 'gentoo-image-builder'"
   
 - name: "{{ title }} record image as processed"
   set_fact:

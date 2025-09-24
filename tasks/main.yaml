@@ -14,7 +14,7 @@
       loop_var: "image"    
 
   - set_fact:
-      images: "{{ images_new + [{'name': 'scratch', 'section': 'build', 'tag': kubler.portage, 'build': kubler.builder, 'type': 'kubler'}] }}"
+      images: "{{ images_new + [{'name': 'scratch', 'section': 'build', 'tag': builder.portage, 'build': { 'configure_builder': builder.configure_builder, 'purge_image_root': builder.purge_image_root }, 'type': 'gentoo-image-builder'}] }}"
       images_processed: "{{ [] }}"
       image_build_sources: "{{ role_path }}/templates/image-build/"
 
