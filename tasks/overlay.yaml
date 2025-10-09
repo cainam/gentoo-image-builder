@@ -1,0 +1,29 @@
+- block:
+  - name: overlay directories
+    file:
+      path: "{{ item }}"
+      state: directory
+      mode: 0750
+      owner: "portage"
+      group: "portage"
+    loop: "{{ (overlays|default([])  | map(attribute='package') | map('regex_replace', '^(.*)$', overlay_dir~'/\\1') | list) + [overlay_dir~'/metadata'] }}"
+
+  - name: layout.conf for overlay
+    copy:
+      content: "masters = gentoo"
+      dest: "{{ overlay_dir }}/metadata/layout.conf"
+      mode: 600
+
+  - name: overlay ebuild files # for each package create for each ebuild a new overlay ebuild using provided sed command
+    shell: |
+      cd "{{ portage_dir }}/{{ item.package }}"
+      for ebuild in *.ebuild; do
+        if [ -f "${ebuild}" -a ! -f "{{ overlay_dir }}/{{ item.package }}/${ebuild}"]; then
+          sed -e '{{ item.ebuild_sed }}' "${ebuild}" > "{{ overlay_dir }}/{{ item.package }}/${ebuild}"
+          chmod 644 "{{ overlay_dir }}/{{ item.package }}/${ebuild}"
+          chown portage:portage "{{ overlay_dir }}/{{ item.package }}/${ebuild}"
+          (cd "{{ overlay_dir }}/{{ item.package }}"; ebuild "./${ebuild}" manifest)
+        fi
+      done
+    loop: "{{ overlays | default([]) }}"
+  run_once: true

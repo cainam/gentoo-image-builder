@@ -62,13 +62,8 @@
   - block: # gentoo image builder
     - name: "{{ title }} variables - 1"
       set_fact:
-        requires: "{{ image_info.requires | default(['core'])| first }}" # as scratch should be the only image without requires attribute
-        dest_dir: "{{ builder.base }}/{{ image_info.section }}/{{ image_info.name }}"
-        build_dir: "{{ builder.base }}/build"
-        stage3_image: "{{ builder.build_dir }}/{{ builder.stage3_base }}:{{ builder.stage3_date }}"
-        stage3_url: "https://distfiles.gentoo.org/releases/{{ default_platform }}/autobuilds/{{ builder.stage3_date }}/"
-        stage3_file: "{{ builder.stage3_base }}-{{ builder.stage3_date }}.tar.xz"
-        core_builder: "{{ builder.build_dir }}/{{ builder.default_builder }}-core:{{ builder.portage }}"
+        requires: "{{ image_info.requires | default(['core'])| first }}" # as scratch should be the only image without requires attribute, core is the default
+        dest_dir: "{{ builder.base }}/{{ builder.build_dir }}/{{ image_info.section }}/{{ image_info.name }}"
         build_image: "{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:{{ image_info.tag }}"
         builder_image: "{{ image_info.section }}/{{ builder.default_builder }}-{{ image_info.name }}:{{ image_info.tag }}"
         latest_image: "{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:latest"
@@ -81,9 +76,12 @@
 
     - name: "{{ title }} variables - 2"
       set_fact:
-        req_section: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='section') | first| default('build')}}"
+        stage3_image: "{{ builder.build_dir }}/{{ builder.stage3_base }}:{{ builder.stage3_date }}"
+        stage3_url: "https://distfiles.gentoo.org/releases/{{ default_platform }}/autobuilds/{{ builder.stage3_date }}/"
+        stage3_file: "{{ builder.stage3_base }}-{{ builder.stage3_date }}.tar.xz"
+        core_builder: "{{ builder.build_dir }}/{{ builder.default_builder }}-core:{{ builder.portage }}"
+        req_section: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='section') | first| default(builder.build_dir)}}"
         req_tag: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='tag') |first | default(builder.portage)}}"
-        portage_dir: "{{ build_dir }}/portage-{{ builder.portage }}"
     - name: "{{ title }} directories"
       file:
         path: "{{ item }}"
@@ -91,7 +89,7 @@
         state: directory
       loop:
       - "{{ dest_dir }}"
-      - "{{ build_dir }}"
+      - "{{ foundation_dir }}"
 
     - block: # check only when image_info.name == 'scratch'
       # portage
@@ -107,10 +105,10 @@
         - name: "{{ title }} get portage"
           get_url:
             url: https://distfiles.gentoo.org/snapshots/portage-{{ builder.portage }}.tar.xz
-            dest: "{{ build_dir }}/"
+            dest: "{{ foundation_dir }}/"
         - name: "{{ title }} extract portage archive"
           shell: |
-            mkdir -p "{{ portage_dir }}" && tar --directory "{{ portage_dir }}" -xf "{{ build_dir }}/portage-{{ builder.portage }}.tar.xz" --strip-components=1
+            mkdir -p "{{ portage_dir }}" && tar --directory "{{ portage_dir }}" -xf "{{ foundation_dir }}/portage-{{ builder.portage }}.tar.xz" --strip-components=1
         when: not check_portage.stat.exists
         
       # stage3 
@@ -126,10 +124,10 @@
         - name: "{{ title }} get stage3"
           get_url:
             url: "{{ stage3_url }}/{{ stage3_file }}"
-            dest: "{{ build_dir }}/"
+            dest: "{{ foundation_dir }}/"
         - name: "{{ title }} build stage3 image"
           shell: |
-            podman import "{{ build_dir }}/{{ stage3_file }}" {{ stage3_image }}
+            podman import "{{ foundation_dir }}/{{ stage3_file }}" {{ stage3_image }}
         when: "check_stage3.rc != 0 or not check_portage.stat.exists"
         
       # core builder
@@ -142,11 +140,11 @@
       - block:
         - name: "{{ title }} build core builder image"
           shell: |
-            cat >> {{ build_dir }}/Dockerfile.core <<EOF
+            cat > {{ foundation_dir }}/Dockerfile.core <<EOF
             FROM {{ stage3_image }}
             {{ builder.env }}
             EOF
-            podman build -f {{ build_dir }}/Dockerfile.core -t {{ core_builder }} > >(tee -a {{ build_dir }}/podman-build.log) 2> >(tee -a {{ build_dir }}/podman-build.log >&2)
+            podman build -f {{ foundation_dir }}/Dockerfile.core -t {{ core_builder }} > >(tee -a {{ foundation_dir }}/podman-build.log) 2> >(tee -a {{ foundation_dir }}/podman-build.log >&2)
         when: "check_core.rc != 0 or check_stage3.rc != 0 or not check_portage.stat.exists"
         
       # scratch builder
@@ -156,71 +154,33 @@
         failed_when: false
         register: check_scratch
       when: image_info.name == 'scratch'
-
-    - name: "{{ title }} create build.sh"
-      vars:
-        build_sh: "{{ dest_dir }}/build.sh"
-      shell: |
-        echo '_packages="{{ image_info.build.packages | default('') }}"' > "{{ build_sh }}"
-        set -x
-
-        cat >> "{{ build_sh }}" <<"INLINE"
-        configure_builder(){
-          {{ image_info.build.configure_builder | default('true') }}
-        }
-        INLINE
-        cat >> "{{ build_sh }}" <<"INLINE"
-        configure_rootfs_build(){
-          {{ image_info.build.configure_rootfs_build | default('true') }}
-        }
-        INLINE
-        echo 'finish_rootfs_build(){
-          {{ image_info.build.finish_rootfs_build | default('true') }}
-        }' >> "{{ build_sh }}"
-        echo 'purge_image_root(){
-          {{ builder.purge_image_root | default('true') }}
-        }' >> "{{ build_sh }}"
-
-    - name: "{{ title }} create Dockerfile"
-      vars:
-        entrypoint: "{{ image_info.build.entrypoint }}"
-        user: "{{ image_info.build.user }}"
-        workdir: "{{ image_info.workdir }}"
-        env: "{{ image_info.env }}"
-      shell: |
-        cat > "{{ dest_dir }}/Dockerfile" <<"EOF"
-        FROM {{ req_section }}/{{ builder.default_builder }}-{{ requires }}:{{ req_tag }} as builder
-        ADD build.sh /
-        RUN source /build.sh && configure_builder && export ROOT=/image-root && configure_rootfs_build && ([ ! -z "${_packages}" ] && emerge --binpkg-respect-use=y -v ${_packages}; true ) && finish_rootfs_build && purge_image_root
-        FROM {% if requires == 'scratch' %}scratch{% else %}{{ registry }}/{{ req_section }}/{{ requires }}:{{ req_tag }}{% endif %}
-
-        {% if env is defined -%}
-        {% for e in env %}
-        ENV {{ e }}="{{ env[e] }}"
-        {% endfor %}
-        {% endif %}
-
-        COPY --from=builder /image-root/ /
-        {% if workdir is defined -%}
-        WORKDIR "{{ workdir }}"
-        {% endif %}
-        {% if user is defined -%}
-        USER "{{ user }}"
-        {% endif %}
-        {% if entrypoint is defined -%}
-        ENTRYPOINT ["{{ entrypoint | join('","') }}"]
-        {% endif %}
-        EOF
+    - debug:
+        msg: "check_scratch.rc: {{ check_scratch.rc|default('none') }}\ncheck_core.rc: {{ check_core.rc|default('none') }}\ncheck_stage3.rc: {{ check_stage3.rc|default('none') }}\ncheck_image.status: {{ check_image.status|default('none') }}\ncheck_builder.rc: {{ check_builder.rc|default('none') }}"
 
     - block:
+      - name: "{{ title }} create build.sh"
+        template:
+          src: build.sh
+          dest: "{{ dest_dir }}/build.sh"
+
+      - name: "{{ title }} create Dockerfile"
+        vars:
+            entrypoint: "{{ image_info.build.entrypoint }}"
+            user: "{{ image_info.build.user }}"
+            workdir: "{{ image_info.workdir }}"
+            env: "{{ image_info.env }}"
+        template:
+          src: Dockerfile
+          dest: "{{ dest_dir }}/Dockerfile"
+
       - name: "{{ title }} build builder"
         shell: >-
-          podman build {{ dest_dir }} --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{  builder.base }}/data/packages:/packages --volume {{ builder.base }}/data/distfiles:/distfiles -t {{ builder_image }} --target builder {% if image_info.name == "scratch" %}--squash-all{%endif%}  > >(tee -a {{ dest_dir }}/podman-build.log) 2> >(tee -a {{ dest_dir  }}/podman-build.log >&2)
+          podman build {{ dest_dir }} --volume {{ overlay_dir }}:/portage-local --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{ package_dir }}:/packages --volume {{ foundation_dir }}/distfiles:/distfiles -t {{ builder_image }} --target builder {% if image_info.name == "scratch" %}--squash-all{%endif%}  > >(tee -a {{ dest_dir }}/podman-build.log) 2> >(tee -a {{ dest_dir  }}/podman-build.log >&2)
 
       - block: 
         - name: "{{ title }} build image"
           shell: >-
-            podman build {{ dest_dir }} --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{ builder.base }}/data/packages:/packages --volume {{ builder.base }}/data/distfiles:/distfiles -t {{ build_image }} > >(tee -a {{ dest_dir }}/podman-build.log) 2> >(tee -a {{ dest_dir  }}/podman-build.log >&2)
+            podman build {{ dest_dir }} --volume {{ overlay_dir }}:/portage-local --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{ package_dir }}:/packages --volume {{ foundation_dir }}/distfiles:/distfiles -t {{ build_image }} > >(tee -a {{ dest_dir }}/podman-build.log) 2> >(tee -a {{ dest_dir  }}/podman-build.log >&2)
 
         - name: "{{ title }} test image"
           shell: |
@@ -234,9 +194,9 @@
             podman tag {{ build_image }} {{ latest_image }}
             podman push {{ latest_image }}
             {% endif %}
-        when: "image_info.name != 'scratch'"
+        when: image_info.name != 'scratch'
       #when: "image_info.name != 'scratch' or check_core.rc != 0 or check_stage3.rc != 0 or not check_portage.stat.exists or check_scratch.rc != 0 or check_builder.rc != 0"
-      when: "image_info.name != 'scratch' and (check_image.status != 200 or check_builder.rc != 0)"
+      when: (image_info.name == 'scratch' and check_scratch.rc != 0) or (image_info.name != 'scratch' and (check_image.status != 200 or check_builder.rc != 0))
     when: image_info.type == 'gentoo-image-builder'
   
   - block:
@@ -255,14 +215,14 @@
         name: shared_helper
         tasks_from: template_directory.yaml
       vars:
-        dir_var: build_dir
+        dir_var: builder.base
     - name: "{{ title }} build image"
       shell: |
         set -xe
         image="{{ registry }}/{{ image_info.section }}/{{ image_info.name }}:{{ image_info.tag | default('latest') }}"
         {{ image_info.command }}
       args:
-        chdir: "{{ build_dir.path }}"
+        chdir: "{{ builder.base }}/tmp"
       register: build_out
     
     - debug: var=build_out
@@ -273,3 +233,9 @@
 - name: "{{ title }} record image as processed"
   set_fact:
     images_processed: "{{ images_processed + [image_info.name] }}"  
+
+- name: "{{ title }} record image details as return values"
+  set_fact:
+    images_details: "{{ images_details | combine({image_info.name: {'section': image_info.section, 'tag': image_info.tag}}) }}"
+  when: image == top_image_label
+

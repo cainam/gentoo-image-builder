@@ -1,32 +1,51 @@
 - block:
+  - name: init image_new list
+    set_fact:
+      images_new: []
+      top_image_label: "image0"
+      images_details: {}
+      foundation_dir: "{{ builder.base }}/data"
+
   - name: prepare image information (set name and section where missing)
     vars: # keep .name if it exists, otherwise take the last part of the source image
       image_new: "{{ image | combine({
         'name':    image.name    | default( (image.source | default('')).split('/')|last),
-        'tag': image.tag  | default( software[image.name].version ),
+        'tag': image.tag  | default( software[image.name].version ) | default(builder.portage),
         'requires': image.requires | default( ['scratch'] ),
         'section': image.section | default( default_section|default('') )
         }) }}"
     set_fact:
       images_new: "{{ images_new | default([]) + [image_new] }}"
     loop: "{{ images }}"
+    when: image.name != 'scratch' # if scratch is added here and the role is called twice, then scratch gets a scratch requirement which would cause an endless loop
     loop_control:
       loop_var: "image"    
 
   - set_fact:
-      images: "{{ images_new + [{'name': 'scratch', 'section': 'build', 'tag': builder.portage, 'build': { 'configure_builder': builder.configure_builder, 'purge_image_root': builder.purge_image_root }, 'type': 'gentoo-image-builder'}] }}"
+      images: "{{ images_new + [{'name': 'scratch', 'section': builder.build_dir, 'tag': builder.portage, 'build': { 'configure_builder': builder.configure_builder}, 'type': 'gentoo-image-builder'}] }}"
       images_processed: "{{ [] }}"
       image_build_sources: "{{ role_path }}/templates/image-build/"
+      package_dir: "{{ foundation_dir }}/packages"
+      overlay_dir: "{{ foundation_dir }}/portage-local"
+      portage_dir: "{{ foundation_dir }}/portage-{{ builder.portage }}"
 
   - debug:
       msg: "updated list of images\n{{ images | to_nice_yaml }}\nlimit_images:\n{{ limit_images | to_nice_yaml }}\n"
 
+  - name: overlay
+    include_tasks: overlay.yaml
+    when: overlays is defined
+
   - name: handle images
     include_tasks: image.yaml
     vars:
-      image: "image0"
+      image: "{{ top_image_label }}"
     when: (limit_images is not defined or image0.name is in limit_images) and image0.name not in images_processed
     loop: "{{ images }}"
     loop_control:
-      loop_var: "image0"
+      loop_var: "{{ top_image_label }}"
+
+  - name: prepare image information to return
+    set_fact:
+      "{{ images_details_var|default('foobar')}}": "{{ images_details }}"
   run_once: true
