@@ -32,7 +32,7 @@
       include_tasks: image.yaml
       vars:
         image: "{{ 'loop_'~t.name|replace('-', '_') }}"
-      when: "{{ t.name not in images_processed }}"
+      when: t.name not in images_processed
       loop: "{{ images | selectattr('name', 'defined') | selectattr('name', 'in', t.requires|default([]) ) }}"
       loop_control:
         loop_var: "{{ 'loop_'~t.name|replace('-', '_') }}"
@@ -51,7 +51,7 @@
       Accept: application/vnd.oci.image.manifest.v1+json
     method: "GET"
   register: check_image
-  when: "'no_exists_check' not in ansible_run_tags"
+  when: not dry_run and 'no_exists_check' not in ansible_run_tags
   failed_when: false
 
 - debug:
@@ -228,7 +228,7 @@
     - debug: var=build_out
       failed_when: false
     when: image_info.type == 'script'
-  when: "'status' not in check_image.keys() or (image_info.name != 'scratch' and check_image is defined and 'status' in check_image.keys() and check_image.status != 200) or image_info.type == 'gentoo-image-builder'"
+  when: not dry_run and ('status' not in check_image.keys() or (image_info.name != 'scratch' and check_image is defined and 'status' in check_image.keys() and check_image.status != 200) or image_info.type == 'gentoo-image-builder')
   
 - name: "{{ title }} record image as processed"
   set_fact:

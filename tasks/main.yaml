@@ -5,6 +5,7 @@
       top_image_label: "image0"
       images_details: {}
       foundation_dir: "{{ builder.base }}/data"
+      dry_run: "{{ dry_run | default(true) }}"
 
   - name: prepare image information (set name and section where missing)
     vars: # keep .name if it exists, otherwise take the last part of the source image
