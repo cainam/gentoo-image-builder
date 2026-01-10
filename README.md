@@ -18,6 +18,10 @@ This solution is not (yet) implementing all the features of kubler, especially
 ### Preserving across images
 portage.provided and /var/db/pkg are preserved inside the builder image. If a new image is build, the builder puts package.provide and /var/db/pkg in place for emerge to consider the related packages as already installed which will later be the case when the image itself is build using the former image as parent image.
 
+### adding data into the image
+additional files can be easily added into the builder by using the "add" attribute of the image build definition which supports a git repository as source and a destination folder
+if these files are needed in the final image, the have to be copied with the custom builder script 
+
 ### Image tags
 Only the base image gets a latest tag, all other tags get dedicated tags with the tags determined in this order:
 - explicitly set

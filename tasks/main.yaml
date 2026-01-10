@@ -7,6 +7,16 @@
       foundation_dir: "{{ builder.base }}/data"
       dry_run: "{{ dry_run | default(true) }}"
 
+  - name: "directories"
+    file:
+      path: "{{ item }}"
+      state: directory
+    loop:
+    - "{{ builder.base  }}"
+    - "{{ foundation_dir }}"
+    - "{{ builder.base }}/{{ builder.build_dir }}"
+    - "{{ foundation_dir }}/patches"
+
   - name: prepare image information (set name and section where missing)
     vars: # keep .name if it exists, otherwise take the last part of the source image
       image_new: "{{ image | combine({
@@ -31,7 +41,7 @@
       portage_dir: "{{ foundation_dir }}/portage-{{ builder.portage }}"
 
   - debug:
-      msg: "updated list of images\n{{ images | to_nice_yaml }}\nlimit_images:\n{{ limit_images | to_nice_yaml }}\n"
+      msg: "updated list of images\n{{ images | to_nice_yaml }}\nlimit_images:\n{{ limit_images | default({}) | to_nice_yaml }}\n"
 
   - name: overlay
     include_tasks: overlay.yaml
@@ -45,6 +55,11 @@
     loop: "{{ images }}"
     loop_control:
       loop_var: "{{ top_image_label }}"
+
+  - name: housekeeping Gentoo distfiles and packages # eclean considers only system deps, not container deps, so time-limit is used to configure the distinction for keeping or deleting packages
+    shell: |
+      DISTDIR="{{ foundation_dir }}/distfiles"       eclean --deep --time-limit {{ gentoo.time_limit }} distfiles
+      PKGDIR="{{ package_dir }}/{{ builder.chost }}" eclean --deep --time-limit {{ gentoo.time_limit }} packages 
 
   - name: prepare image information to return
     set_fact:
