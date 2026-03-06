@@ -9,10 +9,7 @@
 
 # gentoo-image-builder
 
-This git repository is inspired by [Kubler](https://github.com/edannenberg/kubler) and keeps 
-- kubler's build-root.sh script,
-- the approach to create a builder and target image in tandem and
-- [Gentoo](https://www.gentoo.org/)
+This git repository is inspired by [Kubler](https://github.com/edannenberg/kubler) and keeps the approach to create a builder and target image in tandem using [Gentoo](https://www.gentoo.org/)
 
 The resulting images are incredibly small in size (e.g. the smallest busybox using alpine had a size of ~4.6MB, while the Gentoo-based busybox image is 2.6MB with room to shrink even further!)
 
