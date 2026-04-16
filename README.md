@@ -39,7 +39,7 @@ The process is based on a central image definition structure which includes the 
 An example can be found in the examples folder.
 
 ## Variables
-* if the variable images_details_var is set, the role will store details like image section or tag of the input images in a variable named after the content of images_details_var
+* if the variable updated_images_var is set, the role will store the updated images dict (e.g. section or tag) in a variable named accordingly
 
 ## How the images are build
 From Gentoo a first builder is created called builder-scratch which is used for images that are build "FROM scratch".

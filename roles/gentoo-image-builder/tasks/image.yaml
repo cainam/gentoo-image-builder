@@ -13,7 +13,7 @@
     ansible.builtin.assert:
       that:
         - i.type is defined
-        - i.section is defined
+        - i.section is defined and i.section != ''
         - i.tag is defined
         - i.type != 'fetch'  or i.source is defined
         - i.type != 'script' or i.command is defined
@@ -33,7 +33,7 @@
       vars:
         image: "{{ 'loop_'~t.name|replace('-', '_') }}"
       when: t.name not in images_processed
-      loop: "{{ images | selectattr('name', 'defined') | selectattr('name', 'in', t.requires|default([]) ) }}"
+      loop: "{{ __private_images | selectattr('name', 'defined') | selectattr('name', 'in', t.requires|default([]) ) }}"
       loop_control:
         loop_var: "{{ 'loop_'~t.name|replace('-', '_') }}"
   
@@ -43,6 +43,7 @@
       title: "manage image {{ lookup('vars', var_stack[-1]).name }} -"
       var_stack: "{{ var_stack[0:-1] }}"
       image_info: "{{ lookup('vars', var_stack[-1]) }}"
+#  when: image not in images_processed : still it loops over all images
 
 - name: "{{ title }} check if image exists already"
   uri:
@@ -51,7 +52,8 @@
       Accept: application/vnd.oci.image.manifest.v1+json
     method: "GET"
   register: check_image
-  when: not dry_run and 'no_exists_check' not in ansible_run_tags
+  # when: not dry_run and 'no_exists_check' not in ansible_run_tags
+  when: '"no_exists_check" not in ansible_run_tags'
   failed_when: false
 
 - debug:
@@ -80,8 +82,8 @@
         stage3_url: "https://distfiles.gentoo.org/releases/{{ default_platform }}/autobuilds/{{ builder.stage3_date }}/"
         stage3_file: "{{ builder.stage3_base }}-{{ builder.stage3_date }}.tar.xz"
         core_builder: "{{ builder.build_dir }}/{{ builder.default_builder }}-core:{{ builder.portage }}"
-        req_section: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='section') | first| default(builder.build_dir)}}"
-        req_tag: "{{ images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='tag') |first | default(builder.portage)}}"
+        req_section: "{{ __private_images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='section') | first| default(builder.build_dir)}}"
+        req_tag: "{{ __private_images | selectattr('name', 'defined') | selectattr('name', 'equalto', requires ) | map(attribute='tag') |first | default(builder.portage)}}"
         build_log: "{{ dest_dir }}/podman-build.log"
     - name: "{{ title }} directories"
       file:
@@ -90,8 +92,7 @@
       loop:
       - "{{ builder.base }}/{{ builder.build_dir }}/{{ image_info.section }}"
       - "{{ dest_dir }}"
-      - "{{ dest_dir }}/tmp/"
-      - "{{ dest_dir }}/vartmp/"
+      #when: not dry_run
 
     - block: # check only when image_info.name == 'scratch'
       # portage
@@ -182,12 +183,12 @@
           
       - name: "{{ title }} build builder"
         shell: >-
-          podman build --no-cache {{ dest_dir }} --volume {{ dest_dir }}/vartmp:/var/tmp --volume "{{ foundation_dir }}/patches":/etc/portage/patches --volume {{ dest_dir }}/tmp:/tmp {% if overlays is defined %}--volume {{ overlay_dir }}:/portage-local{%endif%} --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{ package_dir }}:/packages --volume {{ foundation_dir }}/distfiles:/distfiles -t {{ builder_image }} --target builder {% if image_info.name == "scratch" %}--squash-all{%endif%}  > >(tee -a {{ build_log }}) 2> >(tee -a {{ build_log }} >&2)
+          podman build --no-cache {{ dest_dir }} --volume "{{ foundation_dir }}/patches":/etc/portage/patches {% if overlays is defined %}--volume {{ overlay_dir }}:{{ builder.local_overlay_dir }}{%endif%} --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{ package_dir }}:/packages --volume {{ foundation_dir }}/distfiles:/distfiles -t {{ builder_image }} --target builder {% if image_info.name == "scratch" %}--squash-all{%endif%}  > >(tee -a {{ build_log }}) 2> >(tee -a {{ build_log }} >&2)
 
       - block: 
         - name: "{{ title }} build image"
           shell: >-
-            podman build {{ dest_dir }} --volume {{ dest_dir }}/vartmp:/var/tmp --volume "{{ foundation_dir }}/patches":/etc/portage/patches --volume {{ dest_dir }}/tmp:/tmp {% if overlays is defined %}--volume {{ overlay_dir }}:/portage-local{%endif%} --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{ package_dir }}:/packages --volume {{ foundation_dir }}/distfiles:/distfiles -t {{ build_image }} > >(tee -a {{ build_log }}) 2> >(tee -a {{ build_log }} >&2)
+            podman build {{ dest_dir }} --volume "{{ foundation_dir }}/patches":/etc/portage/patches {% if overlays is defined %}--volume {{ overlay_dir }}:{{ builder.local_overlay_dir }}{%endif%} --volume {{ portage_dir }}:/var/db/repos/gentoo --volume {{ package_dir }}:/packages --volume {{ foundation_dir }}/distfiles:/distfiles -t {{ build_image }} > >(tee -a {{ build_log }}) 2> >(tee -a {{ build_log }} >&2)
 
         - name: "{{ title }} test image"
           shell: |
@@ -201,7 +202,6 @@
             podman tag {{ build_image }} {{ latest_image }}
             podman push {{ latest_image }}
             {% endif %}
-            #rm -rf "{{ dest_dir }}"/{vartmp,tmp}
         when: image_info.name != 'scratch'
       when: (image_info.name == 'scratch' and check_scratch.rc != 0) or (image_info.name != 'scratch' and (check_image.status != 200 or check_builder.rc != 0))
     when: image_info.type == 'gentoo-image-builder'
@@ -235,14 +235,10 @@
     - debug: var=build_out
       failed_when: false
     when: image_info.type == 'script'
-  when: not dry_run and ('status' not in check_image.keys() or (image_info.name != 'scratch' and check_image is defined and 'status' in check_image.keys() and check_image.status != 200) or image_info.type == 'gentoo-image-builder')
+  #when: not dry_run and ('status' not in check_image.keys() or (image_info.name != 'scratch' and check_image is defined and 'status' in check_image.keys() and check_image.status != 200) or image_info.type == 'gentoo-image-builder')
+  when: ('status' not in check_image.keys() or (image_info.name != 'scratch' and check_image is defined and 'status' in check_image.keys() and check_image.status != 200) or image_info.type == 'gentoo-image-builder')
   
 - name: "{{ title }} record image as processed"
   set_fact:
     images_processed: "{{ images_processed + [image_info.name] }}"  
-
-- name: "{{ title }} record image details as return values"
-  set_fact:
-    images_details: "{{ images_details | combine({image_info.name: {'section': image_info.section, 'tag': image_info.tag}}) }}"
-  when: image == top_image_label
 

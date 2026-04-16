@@ -3,7 +3,8 @@
     that:
       - image_builder_node is defined
       - image_builder_node is string
-      - image_builder_node is not none
+      - images is defined
+      - images is sequence
     quiet: true
 
 - block:
@@ -12,26 +13,15 @@
       foundation_dir: "{{ builder.base }}/data"
     set_fact:
       dry_run: "{{ dry_run | default(true) }}"
-      images_new: []
+      __private_images: []
       top_image_label: "image0"
       images_details: {}
+      images_processed: "{{ [] }}"
+      image_build_sources: "{{ role_path }}/templates/image-build/"
       foundation_dir: "{{ foundation_dir }}"
       package_dir: "{{ foundation_dir }}/packages"
-      overlay_dir: "{{ foundation_dir }}/portage-local"
+      overlay_dir: "{{ foundation_dir }}{{ builder.local_overlay_dir }}"
       portage_dir: "{{ foundation_dir }}/portage-{{ builder.portage }}"
-
-  - name: "directories"
-    file:
-      path: "{{ item }}"
-      state: directory
-    loop:
-    - "{{ builder.base  }}"
-    - "{{ foundation_dir }}"
-    - "{{ builder.base }}/{{ builder.build_dir }}"
-    - "{{ foundation_dir }}/patches"
-    - "{{ foundation_dir }}/distfiles"
-    - "{{ overlay_dir }}"
-    - "{{ package_dir }}"
 
   - name: prepare image information (set name and section where missing)
     vars: # keep .name if it exists, otherwise take the last part of the source image
@@ -42,40 +32,54 @@
         'section': image.section | default( default_section|default('') )
         }) }}"
     set_fact:
-      images_new: "{{ images_new | default([]) + [image_new] }}"
+      __private_images: "{{ __private_images + [image_new] }}"
     loop: "{{ images }}"
     when: image.name != 'scratch' # if scratch is added here and the role is called twice, then scratch gets a scratch requirement which would cause an endless loop
     loop_control:
       loop_var: "image"    
 
-  - set_fact:
-      images: "{{ images_new + [{'name': 'scratch', 'section': builder.build_dir, 'tag': builder.portage, 'build': { 'configure_builder': builder.configure_builder}, 'type': 'gentoo-image-builder'}] }}"
-      images_processed: "{{ [] }}"
-      image_build_sources: "{{ role_path }}/templates/image-build/"
-
-  - debug:
-      msg: "updated list of images\n{{ images | to_nice_yaml }}\nlimit_images:\n{{ limit_images | default({}) | to_nice_yaml }}\n"
-
-  - name: overlay
-    include_tasks: overlay.yaml
-    when: overlays is defined
-
-  - name: handle images
-    include_tasks: image.yaml
-    vars:
-      image: "{{ top_image_label }}"
-    when: (limit_images is not defined or image0.name is in limit_images) and image0.name not in images_processed
-    loop: "{{ images }}"
-    loop_control:
-      loop_var: "{{ top_image_label }}"
-
-  - name: housekeeping Gentoo distfiles and packages # eclean considers only system deps, not container deps, so time-limit is used to configure the distinction for keeping or deleting packages
-    shell: |
-      DISTDIR="{{ foundation_dir }}/distfiles"       eclean --deep --time-limit {{ gentoo.time_limit }} distfiles
-      PKGDIR="{{ package_dir }}/{{ builder.chost }}" eclean --deep --time-limit {{ gentoo.time_limit }} packages 
-
   - name: prepare image information to return
     set_fact:
-      "{{ images_details_var|default('foobar')}}": "{{ images_details }}"
+      "{{ updated_images_var|default('foobar') }}": "{{ __private_images }}"
+
+  - block: 
+    - name: "directories"
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: portage
+      loop:
+      - "{{ builder.base  }}"
+      - "{{ foundation_dir }}"
+      - "{{ builder.base }}/{{ builder.build_dir }}"
+      - "{{ foundation_dir }}/patches"
+      - "{{ foundation_dir }}/distfiles"
+      - "{{ overlay_dir }}"
+      - "{{ overlay_dir }}/metadata"
+      - "{{ package_dir }}"
+  
+    - name: configure local repo
+      copy:
+        content: "masters = gentoo\nrepo-name = {{ builder.local_overlay_name }}"
+        dest: "{{ overlay_dir }}/metadata/layout.conf"
+  
+    - name: overlay
+      include_tasks: overlay.yaml
+      when: overlays is defined
+  
+    - name: handle images
+      include_tasks: image.yaml
+      vars:
+        image: "{{ top_image_label }}"
+      when: (limit_images is not defined or image0.name is in limit_images) and image0.name not in images_processed
+      loop: "{{ __private_images }}"
+      loop_control:
+        loop_var: "{{ top_image_label }}"
+  
+    - name: housekeeping Gentoo distfiles and packages # eclean considers only system deps, not container deps, so time-limit is used to configure the distinction for keeping or deleting packages
+      shell: |
+        DISTDIR="{{ foundation_dir }}/distfiles"       eclean --deep --time-limit {{ gentoo.time_limit }} distfiles
+        PKGDIR="{{ package_dir }}/{{ builder.chost }}" eclean --deep --time-limit {{ gentoo.time_limit }} packages 
+    when: not dry_run
   run_once: true
   delegate_to: "{{ image_builder_node }}"

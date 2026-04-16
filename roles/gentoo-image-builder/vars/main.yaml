@@ -1,6 +1,7 @@
 gentoo:
   time_limit: 180d
 
+overlays: []
 overlays_x:
 - package: net-libs/nodejs
   ebuild_sed: 's/local myconf=(/local myconf=(\n     --partly-static/'
