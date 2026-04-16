@@ -63,10 +63,6 @@
         content: "masters = gentoo\nrepo-name = {{ builder.local_overlay_name }}"
         dest: "{{ overlay_dir }}/metadata/layout.conf"
   
-    - name: overlay
-      include_tasks: overlay.yaml
-      when: overlays is defined
-  
     - name: handle images
       include_tasks: image.yaml
       vars:
