@@ -8,7 +8,7 @@ build(){
   for f in /package.provided-*; do [ -f "${f}" ] && cat "${f}" >> {{ builder.image_root }}/etc/portage/profile/package.provided; done
   cp -rdp /pkg-*/* {{ builder.image_root }}/var/db/pkg/ || true
   {{ image_info.build.configure_rootfs_build | default('true') }}
-  [ ! -z "${_packages}" ] && emerge --binpkg-respect-use=y -v ${_packages}
+  [ ! -z "${_packages}" ] && emerge -v ${_packages}
   {{ image_info.build.finish_rootfs_build | default('true') }}
   {% if image_info.name != 'scratch' %}{{ builder.finish_build | default('true') }}{% endif %}
 }
