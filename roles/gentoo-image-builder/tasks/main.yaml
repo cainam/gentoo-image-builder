@@ -15,7 +15,6 @@
       dry_run: "{{ dry_run | default(true) }}"
       __private_images: [{'name': 'scratch', 'section': "{{ builder.build_dir }}", 'tag': "{{ builder.portage }}", 'build': { 'configure_builder': "{{ builder.configure_builder }}"}, 'type': 'gentoo-image-builder'}]
       top_image_label: "image0"
-      images_details: {}
       images_processed: "{{ [] }}"
       image_build_sources: "{{ role_path }}/templates/image-build/"
       foundation_dir: "{{ foundation_dir }}"
